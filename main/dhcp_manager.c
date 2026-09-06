@@ -279,6 +279,7 @@ int get_connected_clients(connected_client_t *clients, int max_clients) {
         wifi_sta_info_t *sta = &sta_list.sta[i];
 
         memcpy(clients[count].mac, sta->mac, 6);
+	clients[count].rssi = sta->rssi;
         clients[count].ip = 0;
         clients[count].has_ip = false;
         clients[count].name[0] = '\0';

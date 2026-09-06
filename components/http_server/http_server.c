@@ -1200,9 +1200,70 @@ static esp_err_t index_get_handler(httpd_req_t *req)
         free(safe_ap_ssid);
         SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
 
-        resync_connect_count();
-        snprintf(row, sizeof(row), "<tr><td>AP Clients:</td><td>%d</td></tr>", connect_count);
-        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+        #define MAX_INDEX_CLIENTS 8
+connected_client_t index_clients[MAX_INDEX_CLIENTS];
+int index_client_count = get_connected_clients(index_clients, MAX_INDEX_CLIENTS);
+connect_count = index_client_count;
+
+snprintf(row, sizeof(row),
+         "<tr><td>AP Clients:</td><td>%d</td></tr>",
+         connect_count);
+SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+
+for (int i = 0; i < index_client_count; i++) {
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             index_clients[i].mac[0], index_clients[i].mac[1],
+             index_clients[i].mac[2], index_clients[i].mac[3],
+             index_clients[i].mac[4], index_clients[i].mac[5]);
+
+    char ip_str[16] = "-";
+    if (index_clients[i].has_ip) {
+        esp_ip4_addr_t addr;
+        addr.addr = index_clients[i].ip;
+        snprintf(ip_str, sizeof(ip_str), IPSTR, IP2STR(&addr));
+    }
+
+    const char *quality;
+    const char *color;
+
+    if (index_clients[i].rssi >= -50) {
+        quality = "Excellent";
+        color = "#4caf50";
+    } else if (index_clients[i].rssi >= -60) {
+        quality = "Very Good";
+        color = "#8bc34a";
+    } else if (index_clients[i].rssi >= -70) {
+        quality = "Good";
+        color = "#a78bfa";
+    } else if (index_clients[i].rssi >= -80) {
+        quality = "Fair";
+        color = "#ff9800";
+    } else {
+        quality = "Weak";
+        color = "#ff5252";
+    }
+
+    snprintf(row, sizeof(row),
+             "<tr>"
+             "<td style='font-size:0.8rem;'>Client %d:</td>"
+             "<td style='font-size:0.8rem;'>"
+             "<strong>%s</strong><br>"
+             "%s &nbsp; %s<br>"
+             "<span style='color:%s;'>%d dBm - %s</span>"
+             "</td>"
+             "</tr>",
+             i + 1,
+             index_clients[i].name[0] ? index_clients[i].name : "Unknown",
+             ip_str,
+             mac_str,
+             color,
+             index_clients[i].rssi,
+             quality);
+
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+}
     }
 
     /* Stream Uplink row */
