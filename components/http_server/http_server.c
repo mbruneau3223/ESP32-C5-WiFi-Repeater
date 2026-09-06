@@ -1051,6 +1051,17 @@ static const httpd_uri_t favicon_uri = {
 /* Index page GET handler - System Status with navigation */
 static esp_err_t index_get_handler(httpd_req_t *req)
 {
+    /*
+     * Factory-fresh / unconfigured repeater:
+     * send the user straight to the setup wizard.
+     */
+    if (ssid == NULL || strlen(ssid) == 0) {
+        httpd_resp_set_status(req, "302 Found");
+        httpd_resp_set_hdr(req, "Location", "/setup");
+        httpd_resp_send(req, NULL, 0);
+        return ESP_OK;
+    }
+
     resume_sta_if_scan_idle();
     char* buf = NULL;
     size_t buf_len = 0;
@@ -3072,9 +3083,9 @@ static esp_err_t setup_get_handler(httpd_req_t *req)
     char* safe_ssid = html_escape(prefill_ssid[0] ? prefill_ssid : ssid);
     if (safe_ssid == NULL) safe_ssid = strdup("");
 
-    char section[1024];
-    snprintf(section, sizeof(section), SETUP_CHUNK_FORM,
-        safe_ap_ssid, safe_ssid);
+    char section[3072];
+snprintf(section, sizeof(section), SETUP_CHUNK_FORM,
+    safe_ssid, safe_ap_ssid);
     /* Escaped values copied into the stack buffer; free before streaming so a
      * SEND_CHUNK bail-out on a dead client cannot leak them. */
     free(safe_ap_ssid);
@@ -3232,7 +3243,7 @@ static esp_err_t captive_redirect_handler(httpd_req_t *req, httpd_err_code_t err
 {
     if (captive_redirect_url[0] == '\0') {
         snprintf(captive_redirect_url, sizeof(captive_redirect_url),
-                 "http://" IPSTR "/", IP2STR((esp_ip4_addr_t *)&my_ap_ip));
+         "http://" IPSTR "/setup", IP2STR((esp_ip4_addr_t *)&my_ap_ip));
     }
     httpd_resp_set_status(req, "302 Found");
     httpd_resp_set_hdr(req, "Location", captive_redirect_url);

@@ -175,7 +175,7 @@ static void initialize_nvs(void)
 {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK( nvs_flash_erase() );
+        ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
@@ -959,7 +959,7 @@ void app_main(void)
     get_config_param_blob("ap_mac", &ap_mac, 6);
     get_config_param_str("ap_ssid", &ap_ssid);
     if (ap_ssid == NULL) {
-        ap_ssid = param_set_default("ESP32_WiFi_Repeater");
+        ap_ssid = param_set_default("ESP32-Repeater-Setup");
     }
     get_config_param_str("ap_passwd", &ap_passwd);
     if (ap_passwd == NULL) {
@@ -1196,18 +1196,16 @@ void app_main(void)
 #endif
 
 
-    char* web_disabled = NULL;
-    get_config_param_str("web_disabled", &web_disabled);
-    if (web_disabled == NULL) {
-        web_disabled = param_set_default("0");
-    }
-    if (strcmp(web_disabled, "0") ==0) {
-        int web_port_setting = 80;
-        get_config_param_int("web_port", &web_port_setting);
-        ESP_LOGI(TAG,"Starting web server on port %d", web_port_setting);
-        start_webserver((uint16_t)web_port_setting);
-    }
-    free(web_disabled);
+    /*
+ * Always enable the Web UI.
+ * We want the repeater to be manageable over the LAN
+ * without relying on the USB serial console.
+ */
+int web_port_setting = 80;
+
+ESP_LOGI(TAG, "Starting web server on port %d", web_port_setting);
+
+start_webserver((uint16_t)web_port_setting);
 
     // Initialize PCAP capture (TCP server on port 19000)
     pcap_init();

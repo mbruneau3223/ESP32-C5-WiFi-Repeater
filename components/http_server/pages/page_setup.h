@@ -35,29 +35,59 @@ input::placeholder { color: #666; }\
 var qs = window.location.search.substr(1);\
 if (qs.indexOf('ap_ssid=') !== -1 || (qs.indexOf('ssid=') !== -1 && qs.indexOf('password=') !== -1)) {\
 document.getElementById('container').style.display = 'none';\
-document.body.innerHTML ='<div id=\"container\"><h1>Getting Started</h1><p style=\"text-align:center; margin: 2rem 0; color: #a78bfa;\">Settings saved! Rebooting...</p></div>';\
-setTimeout(\"location.href = '/'\", 10000);\
+document.body.innerHTML ='<div id=\"container\">' +\
+'<h1>Setup Complete</h1>' +\
+'<div style=\"text-align:center; margin:1.5rem 0;\">' +\
+'<div style=\"font-size:3rem;\">&#10003;</div>' +\
+'<h2 style=\"border:0; margin-top:0.5rem;\">Settings saved</h2>' +\
+'<p>The repeater is restarting and connecting to your WiFi network.</p>' +\
+'<p style=\"margin-top:1rem; color:#888;\">This setup network may disappear while the device restarts.</p>' +\
+'<p style=\"margin-top:1rem;\">To manage the repeater again, try:</p>' +\
+'<p style=\"margin-top:0.5rem;\"><a href=\"http://esp32-repeater.local/\" style=\"color:#a78bfa; font-weight:600;\">esp32-repeater.local</a></p>' +\
+'<p style=\"margin-top:1rem; color:#888; font-size:0.9rem;\">If that does not work, check your router\\'s connected-device list for the repeater\\'s new IP address.</p>' +\
+'</div></div>';\
 }\
 </script>"
 
 /* Setup form - uses: safe_ap_ssid, safe_ssid */
 #define SETUP_CHUNK_FORM "\
-<form action='/setup' method='GET'>\
-<h2>Access Point</h2>\
+<form id='setupForm' action='/setup' method='GET'>\
+<h2>Internet WiFi</h2>\
+<p style='margin-bottom:1rem; color:#888; font-size:0.9rem;'>Choose the WiFi network this repeater should connect to.</p>\
+<a href='/scan' class='nav-link' style='display:block; text-align:center; margin:0 0 1rem 0;'>Scan for WiFi Networks</a>\
 <table>\
-<tr><td>SSID</td><td><input type='text' name='ap_ssid' value='%s' placeholder='Hotspot name'/></td></tr>\
-<tr><td>Password</td><td><input type='password' name='ap_password' placeholder='unchanged'/></td></tr>\
+<tr><td>SSID</td><td><input id='sta_ssid' type='text' name='ssid' value='%s' placeholder='WiFi network'/></td></tr>\
+<tr><td>Password</td><td><input id='sta_password' type='password' name='password' placeholder='WiFi password'/></td></tr>\
 </table>\
-<h2>Uplink (Internet)</h2>\
+<div style='margin:1.25rem 0; padding:1rem; background:rgba(28,8,44,0.6); border-radius:8px;'>\
+<label style='display:flex; gap:0.75rem; align-items:center; cursor:pointer;'>\
+<input id='sameWifi' type='checkbox' checked>\
+<span>Repeat the same WiFi name and password</span>\
+</label>\
+</div>\
+<div id='advancedAp' style='display:none;'>\
+<h2>Repeated WiFi</h2>\
+<p style='margin-bottom:1rem; color:#888; font-size:0.9rem;'>Use these settings only if you want the repeater to broadcast a different network name.</p>\
 <table>\
-<tr><td>SSID</td><td><input type='text' name='ssid' value='%s' placeholder='WiFi network'/></td></tr>\
-<tr><td>Password</td><td><input type='password' name='password' placeholder='unchanged'/></td></tr>\
-<tr><td></td><td><input type='submit' value='Save &amp; Reboot' class='ok-button'/></td></tr>\
+<tr><td>SSID</td><td><input id='ap_ssid' type='text' name='ap_ssid' value='%s' placeholder='Repeated network name'/></td></tr>\
+<tr><td>Password</td><td><input id='ap_password' type='password' name='ap_password' placeholder='Repeated network password'/></td></tr>\
 </table>\
+</div>\
+<input type='submit' value='Save &amp; Reboot' class='ok-button'/>\
 </form>\
-<div style='margin-top: 1.5rem; text-align: center;'>\
-<a href='/scan' class='nav-link'>📡 WiFi Scan</a>\
-<a href='/' class='nav-link'>🏠 Home</a>\
+<script>\
+var same=document.getElementById('sameWifi');\
+var advanced=document.getElementById('advancedAp');\
+same.addEventListener('change',function(){advanced.style.display=this.checked?'none':'block';});\
+document.getElementById('setupForm').addEventListener('submit',function(){\
+if(same.checked){\
+document.getElementById('ap_ssid').value=document.getElementById('sta_ssid').value;\
+document.getElementById('ap_password').value=document.getElementById('sta_password').value;\
+}\
+});\
+</script>\
+<div style='margin-top:1.5rem; text-align:center;'>\
+<a href='/' class='nav-link'>Home</a>\
 </div>\
 </div>\
 </body>\
