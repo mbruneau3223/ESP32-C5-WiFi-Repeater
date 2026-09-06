@@ -29,8 +29,9 @@ struct dhcp_reservation_entry {
 typedef struct {
     uint8_t mac[6];                          /**< Client MAC address */
     uint32_t ip;                             /**< Client IP (0 if unknown) */
-    char name[DHCP_RESERVATION_NAME_LEN];    /**< Device name from reservation (empty if none) */
-    bool has_ip;                             /**< True if IP was found in DHCP leases */
+    char name[DHCP_RESERVATION_NAME_LEN];    /**< Device name/hostname */
+    bool has_ip;                             /**< True if IP was found */
+    int8_t rssi;                             /**< WiFi signal strength in dBm */
 } connected_client_t;
 
 /**
