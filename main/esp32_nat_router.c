@@ -302,8 +302,8 @@ void * led_status_thread(void * p)
     {
         // --- LED status: OFF=disconnected, ON=connected (packet hooks flicker it off) ---
         if (led_enabled && held_ms == 0) {
-            gpio_set_level(led_gpio, ap_connect ^ led_lowactive);
-        }
+            gpio_set_level(led_gpio, (!ap_connect) ^ led_lowactive);
+}
 
         // --- Poll interval with button polling ---
         for (int t = 0; t < 1000 / POLL_INTERVAL_MS; t++) {
@@ -629,7 +629,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED)
     {
         wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
-        connect_count--;
+        if (connect_count > 0) {
+    connect_count--;
+}
         client_stats_on_disconnect(event->mac);
 
         /* Look up device name from DHCP reservations */
@@ -896,6 +898,16 @@ char* param_set_default(const char* def_val) {
 
 void app_main(void)
 {
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    /*
+     * Waveshare ESP32-C5-Zero antenna switch:
+     * GPIO26 HIGH selects the external IPEX/u.FL antenna.
+     */
+    gpio_reset_pin(GPIO_NUM_26);
+    gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_26, 1);
+#endif
+
     initialize_nvs();
     load_log_level();  // Apply saved log level early
 
@@ -983,26 +995,50 @@ void app_main(void)
     load_acl_rules();
 
     // Load LED GPIO setting from NVS (default -1 = disabled)
-    int led_gpio_setting = -1;
-    if (get_config_param_int("led_gpio", &led_gpio_setting) == ESP_OK) {
-        led_gpio = led_gpio_setting;
-    }
-    // led_gpio remains -1 (disabled) if not set in NVS
+    // Load LED GPIO setting from NVS.
+// NiceMCU ESP32-C5 Mini defaults to GPIO23.
+int led_gpio_setting = -1;
 
-    // Load LED low-active setting from NVS (default 0 = active-high)
-    int led_lowactive_setting = 0;
-    if (get_config_param_int("led_low", &led_lowactive_setting) == ESP_OK) {
-        led_lowactive = (led_lowactive_setting != 0) ? 1 : 0;
-    }
-    if (led_lowactive) {
-        ESP_LOGI(TAG, "LED low-active mode enabled");
-    }
+if (get_config_param_int("led_gpio", &led_gpio_setting) == ESP_OK) {
+    led_gpio = led_gpio_setting;
+}
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+else {
+    led_gpio = 23;
+}
+#endif
 
-    // Load addressable LED strip GPIO from NVS (default -1 = disabled)
+// Load LED polarity from NVS.
+// NiceMCU ESP32-C5 Mini GPIO23 LED is active-low.
+int led_lowactive_setting = 0;
+
+if (get_config_param_int("led_low", &led_lowactive_setting) == ESP_OK) {
+    led_lowactive = (led_lowactive_setting != 0) ? 1 : 0;
+}
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+else {
+    led_lowactive = 1;
+}
+#endif
+
+if (led_gpio >= 0) {
+    ESP_LOGI(TAG, "LED status GPIO %d%s",
+             led_gpio,
+             led_lowactive ? " (low-active)" : "");
+}
+
+// Load addressable LED GPIO from NVS.
+// Waveshare ESP32-C5-Zero onboard WS2812 uses GPIO27.
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    // Onboard WS2812 data pin
+    led_strip_gpio = 27;
+#else
     int led_strip_gpio_setting = -1;
-    if (get_config_param_int("ls_gpio", &led_strip_gpio_setting) == ESP_OK) {
-        led_strip_gpio = led_strip_gpio_setting;
-    }
+    get_config_param_int("ls_gpio", &led_strip_gpio_setting);
+    led_strip_gpio = led_strip_gpio_setting;
+#endif
+
+ESP_LOGI(TAG, "Addressable LED GPIO: %d", led_strip_gpio);
 
 #if defined(CONFIG_IDF_TARGET_ESP32C6)
     // XIAO ESP32-C6 RF switch: GPIO3 enables switch, GPIO14 selects antenna
@@ -1141,15 +1177,33 @@ void app_main(void)
 
     wifi_init(mac, ssid, ent_username, ent_identity, passwd, static_ip, subnet_mask, gateway_addr, ap_mac, ap_ssid, ap_passwd, ap_ip);
 
-    // Start IDF mDNS responder so the device is reachable as <hostname>.local
-    // on both STA and AP interfaces. Active for all build variants.
-    if (mdns_init() == ESP_OK) {
-        mdns_hostname_set(hostname);
-        mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
-        ESP_LOGI(TAG, "mDNS started: %s.local", hostname);
-    } else {
-        ESP_LOGW(TAG, "mDNS init failed");
-    }
+    /*
+ * mDNS management address.
+ * Makes the repeater reachable at:
+ *
+ *     http://esp32-repeater.local/
+ */
+if (mdns_init() == ESP_OK) {
+
+    mdns_hostname_set(hostname);
+    mdns_instance_name_set("ESP32 WiFi Repeater");
+
+    mdns_service_add(
+        NULL,
+        "_http",
+        "_tcp",
+        80,
+        NULL,
+        0
+    );
+
+    ESP_LOGI(TAG,
+             "mDNS started: http://esp32-repeater.local/");
+
+} else {
+
+    ESP_LOGW(TAG, "mDNS init failed");
+}
 
     // Initialise addressable LED strip (if configured)
     led_strip_status_init();

@@ -14,7 +14,7 @@ extern "C" {
 
 #define PARAM_NAMESPACE "esp32_nat"
 
-#define DEFAULT_HOSTNAME "esp32-wifi-repeater"
+#define DEFAULT_HOSTNAME "esp32-repeater"
 
 #define PROTO_TCP 6
 #define PROTO_UDP 17

@@ -1048,9 +1048,150 @@ static const httpd_uri_t favicon_uri = {
     .user_ctx  = NULL
 };
 
+static bool parse_mac_address(const char *str, uint8_t mac[6])
+{
+    unsigned int m[6];
+
+    if (str == NULL) {
+        return false;
+    }
+
+    if (sscanf(str, "%02x:%02x:%02x:%02x:%02x:%02x",
+               &m[0], &m[1], &m[2],
+               &m[3], &m[4], &m[5]) != 6) {
+        return false;
+    }
+
+    for (int i = 0; i < 6; i++) {
+        mac[i] = (uint8_t)m[i];
+    }
+
+    return true;
+}
+
 /* Index page GET handler - System Status with navigation */
 static esp_err_t index_get_handler(httpd_req_t *req)
 {
+        /* ---------------------------------------------------------
+     * Repeater client block / allow actions
+     * --------------------------------------------------------- */
+    if (req->method == HTTP_GET) {
+        size_t query_len = httpd_req_get_url_query_len(req);
+
+        if (query_len > 0 && query_len < 256) {
+            char query[256];
+
+            if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+                char action[16] = "";
+                char mac_text[32] = "";
+
+                httpd_query_key_value(query, "client_action",
+                                      action, sizeof(action));
+
+                httpd_query_key_value(query, "client_mac",
+                                      mac_text, sizeof(mac_text));
+
+                if (action[0] && mac_text[0]) {
+                    uint8_t client_mac[6];
+
+                    if (parse_mac_address(mac_text, client_mac)) {
+
+                        if (strcmp(action, "block") == 0) {
+
+                            /* Preserve the best device name we currently know. */
+                            const char *name =
+                                lookup_device_name_by_mac(client_mac);
+
+                            char saved_name[DHCP_RESERVATION_NAME_LEN] = "";
+
+                            if (name != NULL) {
+                                snprintf(saved_name,
+                                         sizeof(saved_name),
+                                         "%s",
+                                         name);
+                            } else {
+                                connected_client_t clients[8];
+                                int count =
+                                    get_connected_clients(clients, 8);
+
+                                for (int i = 0; i < count; i++) {
+                                    if (memcmp(clients[i].mac,
+                                               client_mac, 6) == 0) {
+                                        if (clients[i].name[0]) {
+                                            snprintf(saved_name,
+                                                     sizeof(saved_name),
+                                                     "%s",
+                                                     clients[i].name);
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+
+                            esp_err_t err =
+                                add_dhcp_reservation(
+                                    client_mac,
+                                    0,
+                                    saved_name[0] ? saved_name : NULL);
+
+                            if (err == ESP_OK) {
+                                ESP_LOGI(TAG,
+                                    "Blocked repeater client "
+                                    "%02X:%02X:%02X:%02X:%02X:%02X",
+                                    client_mac[0], client_mac[1],
+                                    client_mac[2], client_mac[3],
+                                    client_mac[4], client_mac[5]);
+
+                                /*
+ * Immediately disconnect the blocked client.
+ */
+uint16_t aid = 0;
+
+esp_err_t aid_err = esp_wifi_ap_get_sta_aid(client_mac, &aid);
+
+if (aid_err == ESP_OK && aid > 0) {
+    ESP_LOGI(TAG,
+             "Deauthenticating blocked client AID %u",
+             aid);
+
+    esp_err_t deauth_err = esp_wifi_deauth_sta(aid);
+
+    if (deauth_err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "Failed to deauth blocked client: %s",
+                 esp_err_to_name(deauth_err));
+    }
+} else {
+    ESP_LOGI(TAG,
+             "Blocked client is not currently associated");
+}
+                            }
+
+                        } else if (strcmp(action, "allow") == 0) {
+
+                            del_dhcp_reservation(client_mac);
+
+                            ESP_LOGI(TAG,
+                                "Allowed repeater client "
+                                "%02X:%02X:%02X:%02X:%02X:%02X",
+                                client_mac[0], client_mac[1],
+                                client_mac[2], client_mac[3],
+                                client_mac[4], client_mac[5]);
+                        }
+
+                        /*
+                         * Redirect so refreshing the page doesn't repeat
+                         * the action.
+                         */
+                        httpd_resp_set_status(req, "303 See Other");
+                        httpd_resp_set_hdr(req, "Location", "/");
+                        httpd_resp_send(req, NULL, 0);
+                        return ESP_OK;
+                    }
+                }
+            }
+        }
+    }
     /*
      * Factory-fresh / unconfigured repeater:
      * send the user straight to the setup wizard.
@@ -1171,7 +1312,7 @@ static esp_err_t index_get_handler(httpd_req_t *req)
     authenticated = is_authenticated(req);
 
     /* Reusable buffer for building dynamic content */
-    char row[512];
+    char row[1024];
 
     /* --- Begin chunked response --- */
     SEND_CHUNK(req, INDEX_CHUNK_HEAD, HTTPD_RESP_USE_STRLEN);
@@ -1246,38 +1387,126 @@ for (int i = 0; i < index_client_count; i++) {
     }
 
     snprintf(row, sizeof(row),
-             "<tr>"
-             "<td style='font-size:0.8rem;'>Client %d:</td>"
-             "<td style='font-size:0.8rem;'>"
-             "<strong>%s</strong><br>"
-             "%s &nbsp; %s<br>"
-             "<span style='color:%s;'>%d dBm - %s</span>"
-             "</td>"
-             "</tr>",
-             i + 1,
-             index_clients[i].name[0] ? index_clients[i].name : "Unknown",
-             ip_str,
-             mac_str,
-             color,
-             index_clients[i].rssi,
-             quality);
+         "<tr>"
+         "<td style='font-size:0.8rem;'>Client %d:</td>"
+         "<td style='font-size:0.8rem;'>"
+         "<strong>%s</strong><br>"
+         "%s &nbsp; %s<br>"
+         "<span style='color:%s;'>%d dBm - %s</span><br>"
+         "<a href='/?client_action=block&client_mac=%s' "
+"onclick=\"return confirm('Block this device?');\" "
+"style='display:inline-block;margin-top:6px;padding:3px 9px;"
+"background:#8b2635;color:white;border-radius:5px;"
+"text-decoration:none;font-size:0.75rem;font-weight:600;"
+"white-space:nowrap;'>"
+"Block</a>"
+         "</td>"
+         "</tr>",
+         i + 1,
+         index_clients[i].name[0] ?
+             index_clients[i].name : "Unknown",
+         ip_str,
+         mac_str,
+         color,
+         index_clients[i].rssi,
+         quality,
+         mac_str);
 
-    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
 }
     }
 
-    /* Stream Uplink row */
-    if (ap_connect) {
-        wifi_ap_record_t ap_info;
-        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
-            snprintf(row, sizeof(row), "<tr><td>Uplink:</td><td><strong>Connected (%d dBm)</strong></td></tr>", ap_info.rssi);
-            SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
-        } else {
-            SEND_CHUNK(req, "<tr><td>Uplink:</td><td><strong>Connected</strong></td></tr>", HTTPD_RESP_USE_STRLEN);
-        }
-    } else {
-        SEND_CHUNK(req, "<tr><td>Uplink:</td><td><strong>Disconnected</strong></td></tr>", HTTPD_RESP_USE_STRLEN);
+/* ---------------------------------------------------------
+ * Blocked repeater clients
+ * --------------------------------------------------------- */
+bool have_blocked_clients = false;
+
+for (int i = 0; i < MAX_DHCP_RESERVATIONS; i++) {
+
+    if (!dhcp_reservations[i].valid ||
+        dhcp_reservations[i].ip != 0) {
+        continue;
     }
+
+    if (!have_blocked_clients) {
+    SEND_CHUNK(req,
+        "<tr>"
+        "<td style='font-size:0.8rem;'>Blocked:</td>"
+        "<td style='font-size:0.8rem;"
+        "color:#ff8080;font-weight:600;'>"
+        "Blocked Devices"
+        "</td>"
+        "</tr>",
+        HTTPD_RESP_USE_STRLEN);
+
+    have_blocked_clients = true;
+}
+
+    char blocked_mac[18];
+
+    snprintf(blocked_mac, sizeof(blocked_mac),
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             dhcp_reservations[i].mac[0],
+             dhcp_reservations[i].mac[1],
+             dhcp_reservations[i].mac[2],
+             dhcp_reservations[i].mac[3],
+             dhcp_reservations[i].mac[4],
+             dhcp_reservations[i].mac[5]);
+
+    snprintf(row, sizeof(row),
+             "<tr>"
+            "<td></td>"
+            "<td style='font-size:0.8rem;'>"
+             "<strong>%s</strong><br>"
+             "%s<br>"
+             "<a href='/?client_action=allow&client_mac=%s' "
+             "style='display:inline-block;margin-top:6px;"
+             "padding:4px 10px;background:#287a3d;color:white;"
+             "border-radius:5px;text-decoration:none;"
+             "font-weight:600;'>"
+             "Allow</a>"
+             "</td>"
+             "</tr>",
+             dhcp_reservations[i].name[0] ?
+                 dhcp_reservations[i].name : "Unknown",
+             blocked_mac,
+             blocked_mac);
+
+    SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+}
+
+    /* Stream Uplink row */
+if (ap_connect) {
+    wifi_ap_record_t ap_info;
+
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        snprintf(row, sizeof(row),
+                 "<tr>"
+                 "<td>Uplink:</td>"
+                 "<td>"
+                 "<strong>Connected</strong><br>"
+                 "<span style='color:#b9a0ff;'>%d dBm</span>"
+                 "</td>"
+                 "</tr>",
+                 ap_info.rssi);
+
+        SEND_CHUNK(req, row, HTTPD_RESP_USE_STRLEN);
+    } else {
+        SEND_CHUNK(req,
+                   "<tr>"
+                   "<td>Uplink:</td>"
+                   "<td><strong>Connected</strong></td>"
+                   "</tr>",
+                   HTTPD_RESP_USE_STRLEN);
+    }
+} else {
+    SEND_CHUNK(req,
+               "<tr>"
+               "<td>Uplink:</td>"
+               "<td><strong>Disconnected</strong></td>"
+               "</tr>",
+               HTTPD_RESP_USE_STRLEN);
+}
 
     /* Stream uplink IP row */
     if (ap_connect) {
