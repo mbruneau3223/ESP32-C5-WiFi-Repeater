@@ -467,23 +467,80 @@ static inline void sta_connect(void)
 
 static void sta_reconnect_timer_cb(void* arg)
 {
-    ESP_LOGI(TAG, "reconnect backoff expired (%"PRIu32" ms), attempting STA connect", sta_reconnect_delay_ms);
+    ESP_LOGI(TAG,
+             "reconnect backoff expired (%" PRIu32
+             " ms), attempting STA connect",
+             sta_reconnect_delay_ms);
+
+    /*
+     * Attempt to reconnect to the configured upstream AP.
+     */
     sta_connect();
-    /* Double the delay for next time, capped at max */
+
+    /*
+     * Increase the delay for the next attempt, capped at
+     * STA_RECONNECT_MAX_MS.
+     */
     if (sta_reconnect_delay_ms < STA_RECONNECT_MAX_MS) {
         sta_reconnect_delay_ms *= 2;
+
         if (sta_reconnect_delay_ms > STA_RECONNECT_MAX_MS) {
             sta_reconnect_delay_ms = STA_RECONNECT_MAX_MS;
+        }
+    }
+
+    /*
+     * Keep retrying until IP_EVENT_STA_GOT_IP stops the timer.
+     *
+     * Do not depend solely on WIFI_EVENT_STA_DISCONNECTED to
+     * schedule another attempt. If the upstream router disappears,
+     * some failed connection attempts may not produce the event
+     * sequence we expect.
+     */
+    if (!ap_connect && !wifi_scan_active &&
+        ssid != NULL && ssid[0] != '\0') {
+
+        esp_err_t err = esp_timer_start_once(
+            sta_reconnect_timer,
+            (uint64_t)sta_reconnect_delay_ms * 1000);
+
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "failed to schedule next STA reconnect: %s",
+                     esp_err_to_name(err));
+        } else {
+            ESP_LOGI(TAG,
+                     "next STA reconnect scheduled in %" PRIu32 " ms",
+                     sta_reconnect_delay_ms);
         }
     }
 }
 
 static void sta_schedule_reconnect(void)
 {
-    /* Stop any pending reconnect timer before starting a new one */
+    if (ssid == NULL || ssid[0] == '\0') {
+        return;
+    }
+
+    /*
+     * Restart the one-shot timer. The timer callback will continue
+     * scheduling retries until the upstream connection succeeds.
+     */
     esp_timer_stop(sta_reconnect_timer);
-    ESP_LOGI(TAG, "scheduling STA reconnect in %"PRIu32" ms", sta_reconnect_delay_ms);
-    esp_timer_start_once(sta_reconnect_timer, (uint64_t)sta_reconnect_delay_ms * 1000);
+
+    ESP_LOGI(TAG,
+             "scheduling STA reconnect in %" PRIu32 " ms",
+             sta_reconnect_delay_ms);
+
+    esp_err_t err = esp_timer_start_once(
+        sta_reconnect_timer,
+        (uint64_t)sta_reconnect_delay_ms * 1000);
+
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "failed to schedule STA reconnect: %s",
+                 esp_err_to_name(err));
+    }
 }
 
 static void init_sntp_if_needed(void)
