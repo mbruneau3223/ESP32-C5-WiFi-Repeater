@@ -469,13 +469,39 @@ static inline void sta_connect(void)
 
 static void sta_schedule_reconnect(void);
 
+static bool sta_reconnect_attempt_pending = false;
+
 static void sta_reconnect_timer_cb(void* arg)
 {
     if (ap_connect || ssid == NULL || ssid[0] == '\0') {
+        sta_reconnect_attempt_pending = false;
         return;
     }
 
     if (wifi_scan_active) {
+        sta_schedule_reconnect();
+        return;
+    }
+
+    /*
+     * The previous connection attempt has exceeded its timeout.
+     * Cancel it before starting another attempt.
+     */
+    if (sta_reconnect_attempt_pending) {
+        ESP_LOGW(TAG,
+                 "STA connection attempt timed out; resetting attempt");
+
+        sta_reconnect_attempt_pending = false;
+
+        esp_err_t err = esp_wifi_disconnect();
+
+        if (err != ESP_OK &&
+            err != ESP_ERR_WIFI_NOT_CONNECT) {
+            ESP_LOGW(TAG,
+                     "STA disconnect returned: %s",
+                     esp_err_to_name(err));
+        }
+
         sta_schedule_reconnect();
         return;
     }
@@ -485,15 +511,29 @@ static void sta_reconnect_timer_cb(void* arg)
     esp_err_t err = esp_wifi_connect();
 
     if (err == ESP_OK) {
+        sta_reconnect_attempt_pending = true;
+
         /*
-         * Wait for the WiFi connection result.
-         * WIFI_EVENT_STA_DISCONNECTED will schedule another
-         * attempt if this one fails.
+         * Allow up to 30 seconds for the connection attempt.
+         * If no result arrives, this callback runs again.
          */
+        esp_err_t timer_err = esp_timer_start_once(
+            sta_reconnect_timer,
+            30000000ULL);
+
+        if (timer_err != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "Failed to start connection timeout: %s",
+                     esp_err_to_name(timer_err));
+            sta_reconnect_attempt_pending = false;
+            sta_schedule_reconnect();
+        }
+
         return;
     }
 
-    ESP_LOGW(TAG, "Reconnect request failed: %s",
+    ESP_LOGW(TAG,
+             "STA connect request failed: %s",
              esp_err_to_name(err));
 
     sta_schedule_reconnect();
@@ -549,6 +589,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
         ESP_LOGI(TAG,"disconnected - retry to connect to the AP");
+
+        sta_reconnect_attempt_pending = false;
         ap_connect = false;
         if (wifi_scan_active) {
             ESP_LOGI(TAG, "scan in progress - deferring reconnect");
@@ -572,6 +614,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         /* Reset backoff on successful connection */
+        sta_reconnect_attempt_pending = false;
         sta_reconnect_delay_ms = STA_RECONNECT_INITIAL_MS;
         esp_timer_stop(sta_reconnect_timer);
         ap_connect = true;
