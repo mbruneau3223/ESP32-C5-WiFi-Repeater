@@ -458,62 +458,45 @@ static void wifi_connect_band_aware(void)
 
 static inline void sta_connect(void)
 {
-#if WIFI_HAS_5GHZ
-    wifi_connect_band_aware();
-#else
-    esp_wifi_connect();
-#endif
+    esp_err_t err = esp_wifi_connect();
+
+    if (err != ESP_OK && err != ESP_ERR_WIFI_CONN) {
+        ESP_LOGW(TAG,
+                 "STA connect request failed: %s",
+                 esp_err_to_name(err));
+    }
 }
+
+static void sta_schedule_reconnect(void);
 
 static void sta_reconnect_timer_cb(void* arg)
 {
-    ESP_LOGI(TAG,
-             "reconnect backoff expired (%" PRIu32
-             " ms), attempting STA connect",
-             sta_reconnect_delay_ms);
-
-    /*
-     * Attempt to reconnect to the configured upstream AP.
-     */
-    sta_connect();
-
-    /*
-     * Increase the delay for the next attempt, capped at
-     * STA_RECONNECT_MAX_MS.
-     */
-    if (sta_reconnect_delay_ms < STA_RECONNECT_MAX_MS) {
-        sta_reconnect_delay_ms *= 2;
-
-        if (sta_reconnect_delay_ms > STA_RECONNECT_MAX_MS) {
-            sta_reconnect_delay_ms = STA_RECONNECT_MAX_MS;
-        }
+    if (ap_connect || ssid == NULL || ssid[0] == '\0') {
+        return;
     }
 
-    /*
-     * Keep retrying until IP_EVENT_STA_GOT_IP stops the timer.
-     *
-     * Do not depend solely on WIFI_EVENT_STA_DISCONNECTED to
-     * schedule another attempt. If the upstream router disappears,
-     * some failed connection attempts may not produce the event
-     * sequence we expect.
-     */
-    if (!ap_connect && !wifi_scan_active &&
-        ssid != NULL && ssid[0] != '\0') {
-
-        esp_err_t err = esp_timer_start_once(
-            sta_reconnect_timer,
-            (uint64_t)sta_reconnect_delay_ms * 1000);
-
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG,
-                     "failed to schedule next STA reconnect: %s",
-                     esp_err_to_name(err));
-        } else {
-            ESP_LOGI(TAG,
-                     "next STA reconnect scheduled in %" PRIu32 " ms",
-                     sta_reconnect_delay_ms);
-        }
+    if (wifi_scan_active) {
+        sta_schedule_reconnect();
+        return;
     }
+
+    ESP_LOGI(TAG, "Attempting upstream WiFi reconnect");
+
+    esp_err_t err = esp_wifi_connect();
+
+    if (err == ESP_OK) {
+        /*
+         * Wait for the WiFi connection result.
+         * WIFI_EVENT_STA_DISCONNECTED will schedule another
+         * attempt if this one fails.
+         */
+        return;
+    }
+
+    ESP_LOGW(TAG, "Reconnect request failed: %s",
+             esp_err_to_name(err));
+
+    sta_schedule_reconnect();
 }
 
 static void sta_schedule_reconnect(void)
@@ -826,7 +809,10 @@ void wifi_init(const uint8_t* mac, const char* ssid, const char* ent_username, c
             ESP_LOGI(TAG, "STA regular connection");
             strlcpy((char*)wifi_config.sta.password, passwd, sizeof(wifi_config.sta.password));
         }
-        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
+        wifi_config.sta.bssid_set = false;
+        wifi_config.sta.channel = 0;
+
+        ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
         if(strlen(ent_username) != 0) {
             ESP_LOGI(TAG, "STA enterprise connection");
             if(strlen(ent_identity) != 0) {
